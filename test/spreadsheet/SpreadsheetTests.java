@@ -211,16 +211,20 @@ public final class SpreadsheetTests {
                 + "2\nC1\n1\n10\n3\nA1\n7\n" + saved + "\n0\n");
         check(output.contains("A1 [formula]: =C1+C2"), "console displays formula content");
         check(output.contains("C3 [formula]: =A1+B1"), "console does not replace content with a value");
-        check(output.contains("Saved:"), "console save operation succeeds");
+        check(output.contains("Saved."), "console save operation succeeds");
         equal("10", S2VFile.load(saved).getCell("C1").getContent().getSource(), "console edit is saved");
 
         output = runConsole("2\nA1\n2\nkeep me\n6\n" + folder.resolve("missing.s2v")
-                + "\nd\n3\nA1\n0\nd\n");
+                + "\n3\nA1\n0\n");
         check(output.contains("Error:"), "console reports a failed load");
         check(output.contains("A1 [text]: keep me"), "failed load keeps the active sheet");
 
-        output = runConsole("2\nA1\n2\nold content\n1\nc\n3\nA1\n0\nd\n");
-        check(output.contains("A1 [text]: old content"), "cancelling New keeps unsaved contents");
+        output = runConsole("2\nA1\n2\nold content\n5\nA1\n3\nA1\n1\n4\n0\n");
+        check(output.contains("A1 [text]: \n"), "clear removes content");
+        check(output.contains("The spreadsheet is empty."), "new sheet starts empty");
+        output = runConsole("2\nA0\n2\nA1\n1\nwrong\n3\nA1\n0\n");
+        check(output.contains("Error:"), "invalid input is reported without exiting");
+        check(output.contains("A1 [text]: \n"), "invalid number does not change content");
     }
 
     private static String runConsole(String commands) throws Exception {

@@ -80,19 +80,8 @@ public final class S2VFile {
     private static String encode(Content content) {
         String source = content.getSource();
         if (content instanceof FormulaContent) {
-            StringBuilder result = new StringBuilder();
-            for (int i = 0; i < source.length(); i++) {
-                char ch = source.charAt(i);
-                switch (ch) {
-                    case ';': result.append(','); break;
-                    case ',': result.append("\\,"); break;
-                    case '\\': result.append("\\\\"); break;
-                    case '\n': result.append("\\n"); break;
-                    case '\r': result.append("\\r"); break;
-                    default: result.append(ch);
-                }
-            }
-            return result.toString();
+            // Escape literal commas before converting argument separators.
+            return escape(source).replace(",", "\\,").replace(';', ',');
         }
 
         if (!(content instanceof TextContent) || source.isEmpty()) {
@@ -105,18 +94,11 @@ public final class S2VFile {
             return source;
         }
 
-        StringBuilder result = new StringBuilder("\"");
-        for (int i = 0; i < source.length(); i++) {
-            char ch = source.charAt(i);
-            switch (ch) {
-                case '"': result.append("\"\""); break;
-                case '\\': result.append("\\\\"); break;
-                case '\n': result.append("\\n"); break;
-                case '\r': result.append("\\r"); break;
-                default: result.append(ch);
-            }
-        }
-        return result.append('"').toString();
+        return "\"" + escape(source).replace("\"", "\"\"") + "\"";
+    }
+
+    private static String escape(String source) {
+        return source.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r");
     }
 
     private static List<Content> parseRow(String line) throws IOException {
