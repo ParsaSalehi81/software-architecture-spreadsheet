@@ -26,8 +26,11 @@ public final class SpreadsheetTests {
             importedFiles(folder);
             malformedFiles(folder);
             emptyAndFailedSaves(folder);
+            standardCompatibility(folder);
+            readOnlySaving(folder);
+            leadingUnicode(folder);
             consoleOperations(folder);
-            System.out.println("All tests passed (" + checks + " checks in 9 scenarios).");
+            System.out.println("All tests passed (" + checks + " checks in 12 scenarios).");
         } finally {
             deleteTree(folder);
         }
@@ -150,25 +153,25 @@ public final class SpreadsheetTests {
             original.getCell(Coordinate.at(i + 1, 1)).setContent(contents.get(i));
         }
         Path file = folder.resolve("all-contents.s2v");
-        S2VFile.save(original, file);
+        S2VFile.save(original, file, true);
         equal(1, Files.readAllLines(file, StandardCharsets.UTF_8).size(),
                 "embedded newlines do not create extra spreadsheet rows");
-        Spreadsheet loaded = S2VFile.load(file);
+        Spreadsheet loaded = S2VFile.load(file, true);
         for (int i = 0; i < contents.size(); i++) {
             Content actual = loaded.getCell(Coordinate.at(i + 1, 1)).getContent();
             equal(contents.get(i).getType(), actual.getType(), "type survives at column " + (i + 1));
             equal(contents.get(i).getSource(), actual.getSource(), "content survives at column " + (i + 1));
         }
         Path copy = folder.resolve("all-contents-copy.s2v");
-        S2VFile.save(loaded, copy);
+        S2VFile.save(loaded, copy, true);
         equal(read(file), read(copy), "repeated save/load is stable");
     }
 
     private static void importedFiles(Path folder) throws Exception {
         Path file = folder.resolve("import.s2v");
-        Files.write(file, ("\uFEFF\"12\";12;hello,world;=SUMA(1,2);\r\n\r\n;;last\r\n")
+        Files.write(file, ("\"12\";12;hello,world;=SUMA(1,2);\r\n\r\n;;last\r\n")
                 .getBytes(StandardCharsets.UTF_8));
-        Spreadsheet sheet = S2VFile.load(file);
+        Spreadsheet sheet = S2VFile.load(file, true);
         equal("text", sheet.getCell("A1").getContent().getType(), "quoted numeric-looking text");
         equal("number", sheet.getCell("B1").getContent().getType(), "unquoted number");
         equal("hello,world", sheet.getCell("C1").getContent().getSource(), "text comma is not changed");
@@ -182,7 +185,7 @@ public final class SpreadsheetTests {
         Path file = folder.resolve("broken.s2v");
         for (String invalid : Arrays.asList("\"not closed", "\"ok\"junk", "\"bad\\q\"", "=bad\\")) {
             Files.write(file, ("valid;row\n" + invalid + "\n").getBytes(StandardCharsets.UTF_8));
-            expect(IOException.class, () -> S2VFile.load(file), "malformed S2V is reported");
+            expect(IOException.class, () -> S2VFile.load(file, true), "malformed S2V is reported");
         }
         expect(IOException.class, () -> S2VFile.load(folder.resolve("missing.s2v")), "missing file");
     }
@@ -205,26 +208,104 @@ public final class SpreadsheetTests {
         equal("keep", sheet.getCell("A1").getContent().getSource(), "failed save keeps active contents");
     }
 
+    private static void standardCompatibility(Path folder) throws Exception {
+        Path file = folder.resolve("literal.s2v");
+        String raw = "\"12\";\"not closed;C:\\new\\path;=raw\\q;hello,world\n";
+        Files.writeString(file, raw, StandardCharsets.UTF_8);
+        Spreadsheet sheet = S2VFile.load(file);
+        equal("\"12\"", sheet.getCell("A1").getContent().getSource(), "standard quotes are literal");
+        equal("\"not closed", sheet.getCell("B1").getContent().getSource(), "no invented quote syntax");
+        equal("C:\\new\\path", sheet.getCell("C1").getContent().getSource(), "standard backslashes are literal");
+        equal("=raw\\q", sheet.getCell("D1").getContent().getSource(), "raw formulas are not unescaped");
+        S2VFile.save(sheet, file);
+        equal(raw, read(file), "standard literals save unchanged");
+        sheet.setContent("A1", new TextContent("12"));
+        S2VFile.save(sheet, file);
+        equal("number", S2VFile.load(file).getCell("A1").getContent().getType(),
+                "standard S2V infers types, as documented");
+        String previous = read(file);
+        sheet.setContent("A1", new TextContent("left;right"));
+        expect(IOException.class, () -> S2VFile.save(sheet, file), "standard delimiters need a defined escape rule");
+        equal(previous, read(file), "unsupported standard content does not corrupt the saved file");
+        S2VFile.save(sheet, file, true);
+        equal("left;right", S2VFile.load(file, true).getCell("A1").getContent().getSource(),
+                "quoted mode explicitly preserves delimiter text");
+    }
+
+    private static void readOnlySaving(Path folder) throws Exception {
+        Spreadsheet sheet = new Spreadsheet();
+        sheet.setContent("AA5", new TextContent("last"));
+        Cell stored = sheet.findCell(Coordinate.parse("AA5"));
+        for (boolean quoted : new boolean[] {false, true}) {
+            S2VFile.save(sheet, folder.resolve("sparse.s2v"), quoted);
+            for (int row = 1; row <= 5; row++) {
+                for (int col = 1; col <= 27; col++) {
+                    Cell cell = sheet.findCell(Coordinate.at(col, row));
+                    check(row == 5 && col == 27 ? cell == stored : cell == null,
+                            "saving does not add empty cells or replace stored cells");
+                }
+            }
+        }
+    }
+
+    private static void leadingUnicode(Path folder) throws Exception {
+        Path file = folder.resolve("unicode.s2v");
+        for (boolean quoted : new boolean[] {false, true}) {
+            for (String text : Arrays.asList("\uFEFFhello", "\uFEFF", "\uFEFF\"hello\"")) {
+                Spreadsheet sheet = new Spreadsheet();
+                sheet.setContent("A1", new TextContent(text));
+                S2VFile.save(sheet, file, quoted);
+                equal(text, S2VFile.load(file, quoted).getCell("A1").getContent().getSource(),
+                        "leading U+FEFF in A1 is content and survives");
+            }
+        }
+    }
+
     private static void consoleOperations(Path folder) throws Exception {
         Path saved = folder.resolve("console.s2v");
-        String output = runConsole("6\nexamples/project-example.s2v\n3\nA1\n3\nC3\n"
-                + "2\nC1\n1\n10\n3\nA1\n7\n" + saved + "\n0\n");
+        String output = runConsole("6\nexamples/project-example.s2v\n\n3\nA1\n3\nC3\n"
+                + "2\nC1\n1\n10\n3\nA1\n7\n" + saved + "\n\n0\n");
         check(output.contains("A1 [formula]: =C1+C2"), "console displays formula content");
-        check(output.contains("C3 [formula]: =A1+B1"), "console does not replace content with a value");
-        check(output.contains("Saved."), "console save operation succeeds");
+        check(output.contains("C3 [formula]: =A1+B1"), "console does not calculate values");
+        check(output.contains("Saved."), "console save succeeds");
         equal("10", S2VFile.load(saved).getCell("C1").getContent().getSource(), "console edit is saved");
 
         output = runConsole("2\nA1\n2\nkeep me\n6\n" + folder.resolve("missing.s2v")
-                + "\n3\nA1\n0\n");
-        check(output.contains("Error:"), "console reports a failed load");
+                + "\n\nd\n3\nA1\n0\nd\n");
+        check(output.contains("Error:"), "console reports failed load");
         check(output.contains("A1 [text]: keep me"), "failed load keeps the active sheet");
 
-        output = runConsole("2\nA1\n2\nold content\n5\nA1\n3\nA1\n1\n4\n0\n");
+        output = runConsole("2\nA1\n2\nold content\n5\nA1\n3\nA1\n1\nd\n4\n0\n");
         check(output.contains("A1 [text]: \n"), "clear removes content");
         check(output.contains("The spreadsheet is empty."), "new sheet starts empty");
         output = runConsole("2\nA0\n2\nA1\n1\nwrong\n3\nA1\n0\n");
         check(output.contains("Error:"), "invalid input is reported without exiting");
         check(output.contains("A1 [text]: \n"), "invalid number does not change content");
+
+        String edit = "2\nA1\n2\nkeep\n";
+        for (String action : Arrays.asList("1\nc\n", "6\nexamples/project-example.s2v\n\nc\n", "0\nc\n",
+                "1\ns\n-\n", "1\ns\n" + folder.resolve("missing/f.s2v") + "\n\n")) {
+            output = runConsole(edit + action + "3\nA1\n0\nd\n");
+            check(output.contains("A1 [text]: keep"), "cancelled/failed action keeps unsaved sheet");
+        }
+        String previous = read(saved);
+        output = runConsole(edit + "7\n" + saved + "\nn\n0\nd\n");
+        equal(previous, read(saved), "declining overwrite keeps existing file");
+        check(output.contains("Unsaved changes:"), "declined save leaves sheet unsaved");
+
+        Path exitFile = folder.resolve("exit.s2v");
+        output = runConsole(edit + "0\ns\n" + exitFile + "\n\n");
+        check(output.contains("Saved."), "save before exit succeeds");
+        equal("keep", S2VFile.load(exitFile).getCell("A1").getContent().getSource(), "exit saves requested content");
+        output = runConsole("6\n" + saved + "\n\n" + edit + "7\n\ny\n\n0\n");
+        equal("keep", S2VFile.load(saved).getCell("A1").getContent().getSource(), "reuse path and confirm overwrite");
+
+        Path quotedFile = folder.resolve("quoted.s2v");
+        output = runConsole("2\nA1\n2\n12\n7\n" + quotedFile + "\nq\n6\n" + quotedFile + "\nq\n3\nA1\n0\n");
+        check(output.contains("A1 [text]: 12"), "explicit quoted mode preserves numeric-looking text");
+        equal("text", S2VFile.load(quotedFile, true).getCell("A1").getContent().getType(), "quoted save used");
+        output = runConsole(edit);
+        check(output.contains("Unsaved changes were not saved."), "closed input reports unsaved data");
     }
 
     private static String runConsole(String commands) throws Exception {

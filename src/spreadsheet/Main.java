@@ -1,6 +1,8 @@
 package spreadsheet;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.NoSuchElementException;
 import java.util.Scanner;
@@ -9,6 +11,8 @@ import java.util.Scanner;
 public final class Main {
     private final Scanner input = new Scanner(System.in);
     private Spreadsheet sheet = new Spreadsheet();
+    private Path savedPath;
+    private boolean changed;
 
     public static void main(String[] args) {
         new Main().run();
@@ -16,14 +20,17 @@ public final class Main {
 
     private void run() {
         System.out.println("Spreadsheet - Step 2 | Mohammad Parsa Salehi");
-        System.out.println("Save before loading, starting a new sheet or exiting.");
         while (true) {
             System.out.println("\n1. New  2. Set  3. View  4. List  5. Clear  6. Load  7. Save  0. Exit");
             try {
                 switch (ask("Option: ").trim()) {
                     case "1":
-                        sheet = new Spreadsheet();
-                        System.out.println("New blank spreadsheet.");
+                        if (canLeaveSheet()) {
+                            sheet = new Spreadsheet();
+                            savedPath = null;
+                            changed = false;
+                            System.out.println("New blank spreadsheet.");
+                        }
                         break;
                     case "2": setContent(); break;
                     case "3": printCell(sheet.getCell(ask("Coordinate: "))); break;
@@ -35,22 +42,38 @@ public final class Main {
                             printCell(cell);
                         }
                         break;
-                    case "5": sheet.clearCell(ask("Coordinate: ")); break;
+                    case "5":
+                        sheet.clearCell(ask("Coordinate: "));
+                        changed = true;
+                        break;
                     case "6":
-                        // Assignment happens only after the complete file loads successfully.
-                        sheet = S2VFile.load(Paths.get(ask("File to load: ")));
-                        System.out.println("Loaded.");
+                        String name = ask("File to load (empty cancels): ");
+                        if (!name.isEmpty()) {
+                            boolean quoted = askQuotedMode();
+                            if (canLeaveSheet()) {
+                                // A failed load never replaces the active sheet.
+                                sheet = S2VFile.load(Paths.get(name), quoted);
+                                savedPath = Paths.get(name);
+                                changed = false;
+                                System.out.println("Loaded.");
+                            }
+                        }
                         break;
-                    case "7":
-                        S2VFile.save(sheet, Paths.get(ask("File to save (replaces existing file): ")));
-                        System.out.println("Saved.");
+                    case "7": saveSpreadsheet(); break;
+                    case "0":
+                        if (canLeaveSheet()) {
+                            input.close();
+                            return;
+                        }
                         break;
-                    case "0": input.close(); return;
                     default: System.out.println("Choose a menu option.");
                 }
             } catch (NoSuchElementException e) {
+                if (changed) {
+                    System.out.println("Input closed. Unsaved changes were not saved.");
+                }
                 input.close();
-                return; // End of console input.
+                return;
             } catch (IOException | IllegalArgumentException e) {
                 System.out.println("Error: " + e.getMessage());
             }
@@ -60,6 +83,41 @@ public final class Main {
     private String ask(String prompt) {
         System.out.print(prompt);
         return input.nextLine();
+    }
+
+    private boolean askQuotedMode() {
+        String mode = ask("Format: Enter = brief's S2V (types inferred), q = custom quoted format: ").trim();
+        if (!mode.isEmpty() && !mode.equalsIgnoreCase("q")) {
+            throw new IllegalArgumentException("Press Enter for standard S2V or enter q.");
+        }
+        return mode.equalsIgnoreCase("q");
+    }
+
+    private boolean saveSpreadsheet() throws IOException {
+        String name = ask("Save path (Enter reuses " + savedPath + "; '-' cancels): ");
+        if (name.equals("-") || (name.isEmpty() && savedPath == null)) {
+            return false;
+        }
+        Path path = name.isEmpty() ? savedPath : Paths.get(name);
+        if (Files.exists(path) && !ask("Overwrite existing file? (y/n): ").equalsIgnoreCase("y")) {
+            return false;
+        }
+        S2VFile.save(sheet, path, askQuotedMode());
+        savedPath = path;
+        changed = false;
+        System.out.println("Saved.");
+        return true;
+    }
+
+    private boolean canLeaveSheet() throws IOException {
+        if (!changed) {
+            return true;
+        }
+        switch (ask("Unsaved changes: (s)ave, (d)iscard, (c)ancel: ").toLowerCase()) {
+            case "s": return saveSpreadsheet();
+            case "d": return true;
+            default: return false;
+        }
     }
 
     private void setContent() {
@@ -76,6 +134,7 @@ public final class Main {
             default: content = new FormulaContent(source);
         }
         sheet.getCell(coordinate).setContent(content);
+        changed = true;
         printCell(sheet.getCell(coordinate));
     }
 

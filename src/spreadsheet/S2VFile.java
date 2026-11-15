@@ -17,16 +17,18 @@ public final class S2VFile {
     }
 
     public static Spreadsheet load(Path path) throws IOException {
+        return load(path, false);
+    }
+
+    /** Quoting is an explicit extension, never guessed from file contents. */
+    public static Spreadsheet load(Path path, boolean quoted) throws IOException {
         Spreadsheet sheet = new Spreadsheet();
         try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
             String line;
             int row = 1;
             while ((line = reader.readLine()) != null) {
-                if (row == 1 && line.startsWith("\uFEFF")) {
-                    line = line.substring(1); // Accept a UTF-8 byte order mark.
-                }
                 try {
-                    List<Content> contents = parseRow(line);
+                    List<Content> contents = quoted ? parseRow(line) : parseStandardRow(line);
                     for (int column = 1; column <= contents.size(); column++) {
                         sheet.getCell(Coordinate.at(column, row)).setContent(contents.get(column - 1));
                     }
@@ -40,6 +42,10 @@ public final class S2VFile {
     }
 
     public static void save(Spreadsheet sheet, Path path) throws IOException {
+        save(sheet, path, false);
+    }
+
+    public static void save(Spreadsheet sheet, Path path, boolean quoted) throws IOException {
         Path target = path.toAbsolutePath();
         Path parent = target.getParent();
         if (parent == null || !Files.isDirectory(parent)) {
@@ -60,8 +66,10 @@ public final class S2VFile {
                         if (column > 1) {
                             writer.write(';');
                         }
-                        Content content = sheet.getCell(Coordinate.at(column, row)).getContent();
-                        writer.write(encode(content));
+                        Cell cell = sheet.findCell(Coordinate.at(column, row));
+                        if (cell != null) {
+                            writer.write(quoted ? encode(cell.getContent()) : encodeStandard(cell.getContent()));
+                        }
                     }
                     writer.newLine();
                 }
@@ -75,6 +83,23 @@ public final class S2VFile {
         } finally {
             Files.deleteIfExists(temporary);
         }
+    }
+
+    private static List<Content> parseStandardRow(String line) {
+        List<Content> contents = new ArrayList<>();
+        for (String field : line.split(";", -1)) {
+            contents.add(Content.fromSource(field.startsWith("=") ? field.replace(',', ';') : field));
+        }
+        return contents;
+    }
+
+    private static String encodeStandard(Content content) throws IOException {
+        String source = content.getSource();
+        if (source.indexOf('\n') >= 0 || source.indexOf('\r') >= 0
+                || (!(content instanceof FormulaContent) && source.indexOf(';') >= 0)) {
+            throw new IOException("Standard S2V has no escape rule for this content. Choose quoted mode.");
+        }
+        return content instanceof FormulaContent ? source.replace(';', ',') : source;
     }
 
     private static String encode(Content content) {

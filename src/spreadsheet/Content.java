@@ -21,7 +21,7 @@ public abstract class Content {
 
     public abstract String getType();
 
-    /** Type detection used for ordinary, unquoted S2V fields. */
+    /** Type detection used for ordinary S2V fields. */
     public static Content fromSource(String source) {
         if (source == null) {
             throw new IllegalArgumentException("Cell content cannot be null.");

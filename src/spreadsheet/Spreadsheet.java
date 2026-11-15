@@ -13,12 +13,20 @@ public final class Spreadsheet {
         if (coordinate == null) {
             throw new IllegalArgumentException("A coordinate is required.");
         }
-        Cell cell = cells.get(coordinate);
+        Cell cell = findCell(coordinate);
         if (cell == null) {
             cell = new Cell(coordinate);
             cells.put(coordinate, cell);
         }
         return cell;
+    }
+
+    /** Returns an existing cell, or null, without creating an empty cell. */
+    public Cell findCell(Coordinate coordinate) {
+        if (coordinate == null) {
+            throw new IllegalArgumentException("A coordinate is required.");
+        }
+        return cells.get(coordinate);
     }
 
     public Cell getCell(String coordinate) {
